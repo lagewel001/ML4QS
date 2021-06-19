@@ -4,7 +4,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import tensorflow_addons as tfa
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, ConvLSTM2D, LSTM
+from tensorflow.keras.layers import Dense, ConvLSTM2D, LSTM, Dropout
 from tensorflow.python.keras.callbacks import EarlyStopping, ModelCheckpoint
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.python.keras.layers import Flatten
@@ -66,10 +66,13 @@ def convlstm():
 
 
 def lstm():
+    # Werkt niet
     model.add(LSTM(100, activation='relu', input_length=train_X.shape[2]))
+    model.add(Dropout(.2))
     model.add(Dense(50))
 
 
+convlstm()
 model.add(Dense(6, activation='softmax'))
 
 es_monitor = EarlyStopping(monitor='val_loss', mode='min', patience=3, verbose=1)
