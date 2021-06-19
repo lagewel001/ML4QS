@@ -129,40 +129,40 @@ for user_code, user_data in combi_data.groupby('user_code'):
             del user_data[col + '_outlier']
 
         # Lowpass filtering (and even more interpolation!)
-        # for col in feature_cols:
-        #     user_data = MisVal.impute_interpolate(user_data, col)
-        #
-        # fs = float(1000) / epsilon
-        # cutoff = 1.5
-        # for col in feature_cols:
-        #     data = LowPass.low_pass_filter(user_data, col, fs, cutoff, order=10)
-        #     data[col] = data[col + '_lowpass']
-        #     del data[col + '_lowpass']
-        #
-        # for col in feature_cols:
-        #     data = MisVal.impute_interpolate(user_data, col)
-        #
-        # n_pcs = np.argmax(PCA.determine_pc_explained_variance(user_data, feature_cols)) + 1
-        # data = PCA.apply_pca(copy.deepcopy(user_data), feature_cols, n_pcs)
+        for col in feature_cols:
+            user_data = MisVal.impute_interpolate(user_data, col)
+
+        fs = float(1000) / epsilon
+        cutoff = 1.5
+        for col in feature_cols:
+            data = LowPass.low_pass_filter(user_data, col, fs, cutoff, order=10)
+            data[col] = data[col + '_lowpass']
+            del data[col + '_lowpass']
+
+        for col in feature_cols:
+            data = MisVal.impute_interpolate(user_data, col)
+
+        n_pcs = np.argmax(PCA.determine_pc_explained_variance(user_data, feature_cols)) + 1
+        data = PCA.apply_pca(copy.deepcopy(user_data), feature_cols, n_pcs)
 
         # Add frequency features
-        # print("*Prrrt Prrrt* Adding frequency features...")
-        # if 'datetime' in data.columns:
-        #     data = data.set_index('datetime', drop=True)
-        # data.index = pd.to_datetime(data.index)
-        #
-        # ws = int(float(0.5 * 60000) / epsilon)
-        # fs = float(1000) / epsilon
-        #
-        # for col in feature_cols:
-        #     aggregations = user_data[col].rolling(f"{ws}s", min_periods=ws)
-        #     user_data[col + '_temp_mean_ws_' + str(ws)] = aggregations.mean()
-        #     user_data[col + '_temp_std_ws_' + str(ws)] = aggregations.std()
-        #
-        # user_data = CatAbs.abstract_categorical(user_data, ['covid_symptoms_score'], ['like'], 0.03,
-        #                                         int(float(5 * 60000) / epsilon), 2)
-        # user_data = FreqAbs.abstract_frequency(copy.deepcopy(user_data), feature_cols,
-        #                                        int(float(10000) / epsilon), float(1000) / epsilon)
+        print("*Prrrt Prrrt* Adding frequency features...")
+        if 'datetime' in data.columns:
+            data = data.set_index('datetime', drop=True)
+        data.index = pd.to_datetime(data.index)
+
+        ws = int(float(0.5 * 60000) / epsilon)
+        fs = float(1000) / epsilon
+
+        for col in feature_cols:
+            aggregations = user_data[col].rolling(f"{ws}s", min_periods=ws)
+            user_data[col + '_temp_mean_ws_' + str(ws)] = aggregations.mean()
+            user_data[col + '_temp_std_ws_' + str(ws)] = aggregations.std()
+
+        user_data = CatAbs.abstract_categorical(user_data, ['covid_symptoms_score'], ['like'], 0.03,
+                                                int(float(5 * 60000) / epsilon), 2)
+        user_data = FreqAbs.abstract_frequency(copy.deepcopy(user_data), feature_cols,
+                                               int(float(10000) / epsilon), float(1000) / epsilon)
 
         # Clustering
 
