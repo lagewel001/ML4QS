@@ -1,10 +1,10 @@
 import copy
-import csv
 import numpy as np
 import pandas as pd
 import os
 import scipy.interpolate as interp
 from matplotlib import pyplot as plt
+from moepy import lowess
 from sklearn.metrics import classification_report
 
 from Chapter3.ImputationMissingValues import ImputationMissingValues
@@ -163,13 +163,24 @@ for user_code, user_data in combi_data.groupby('user_code'):
                                          len(user_data[bp_data.index[0]:bp_data.index[-1]]))
                         spline = interp.BSpline(t, c, k, extrapolate=False)
 
-                        bp_curve = spline(xx)
-                        bp_curve = np.interp(bp_curve,
-                                             (bp_curve.min(), bp_curve.max()),
-                                             (bp_data.min(), bp_data.max()))
+                        interp_curve = spline(xx)
+                        if np.isnan(interp_curve).all():
+                            df_index = pd.Series(
+                                np.full(len(user_data[bp_data.index[0]:bp_data.index[-1]].index), np.nan),
+                                index=user_data[bp_data.index[0]:bp_data.index[-1]].index)
+                            df_index.update(bp_data)
+
+                            lowess_model = lowess.Lowess()
+                            lowess_model.fit(t_index.values, bp_data.values, frac=0.12)
+
+                            interp_curve = lowess_model.predict(xx)
+
+                        interp_curve = np.interp(interp_curve,
+                                                 (interp_curve.min(), interp_curve.max()),
+                                                 (bp_data.min(), bp_data.max()))
 
                         user_data[col] = np.nan
-                        user_data[bp_data.index[0]:bp_data.index[-1]][col] = bp_curve
+                        user_data[bp_data.index[0]:bp_data.index[-1]][col] = interp_curve
 
         # Outlier detection
         print("*Reutel Reutel* Doing Chauvenet outlier detection...")
@@ -251,7 +262,8 @@ for user_code, user_data in combi_data.groupby('user_code'):
 # CALCULATE BASELINE HERE
 # 1. Haal alle CSV'tjes op die worden aangemaakt op bovenstaande line en plak ze achter elkaar
 files = [os.path.join("./user_data/", file) for file in os.listdir("./user_data/")]
-all_users_data = pd.concat((pd.read_csv(f) for f in files if f.endswith('csv')), ignore_index=True)
+all_users_data = pd.concat((pd.read_csv(f) for f in files if (f.endswith('.csv') and not f.endswith('corrs.csv'))),
+                           ignore_index=True)
 # 2. Haal totaal aantal covid_symtoms_scores op en noteer deze.
 occ_most = int(all_users_data.covid_symptoms_score.mode().iloc[0])
 
