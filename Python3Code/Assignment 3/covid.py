@@ -1,8 +1,11 @@
 import copy
 import numpy as np
 import pandas as pd
+import os
 import scipy.interpolate as interp
 from matplotlib import pyplot as plt
+from sklearn.metrics import classification_report
+
 
 from Chapter3.ImputationMissingValues import ImputationMissingValues
 from Chapter3.OutlierDetection import DistributionBasedOutlierDetection
@@ -193,8 +196,20 @@ for user_code, user_data in combi_data.groupby('user_code'):
         for corr in corrs.iterrows():
             print(f"{corr[0]},{corr[1].Pearson},{corr[1].Spearman}")
 
-        user_data.to_csv(f"./covid_data_{user_code}.csv")
+        user_data.to_csv(f"./user_data/covid_data_{user_code}.csv")
 
+
+files = [os.path.join("./user_data/", file) for file in os.listdir("./user_data/")]
+all_users_data = pd.concat((pd.read_csv(f) for f in files if f.endswith('csv')), ignore_index=True)
+occ_most = int(all_users_data.covid_symptoms_score.mode().iloc[0])
+all_counts = all_users_data['covid_symptoms_score'].value_counts()
+print(all_counts)
+all_users_data["major_baseline"] = occ_most
+all_users_data["random_baseline"] = 
+all_users_data.to_csv(f"./all_users_data.csv")
+
+clas_report = classification_report(all_users_data['covid_symptoms_score'], all_users_data['major_baseline'])
+print(clas_report)        
 # CALCULATE BASELINE HERE
 # 1. Haal alle CSV'tjes op die worden aangemaakt op bovenstaande line en plak ze achter elkaar
 # 2. Haal totaal aantal covid_symtoms_scores op en noteer deze. Bijvoorbeeld
