@@ -198,25 +198,22 @@ for user_code, user_data in combi_data.groupby('user_code'):
 
         user_data.to_csv(f"./user_data/covid_data_{user_code}.csv")
 
-
-files = [os.path.join("./user_data/", file) for file in os.listdir("./user_data/")]
-all_users_data = pd.concat((pd.read_csv(f) for f in files if f.endswith('csv')), ignore_index=True)
-occ_most = int(all_users_data.covid_symptoms_score.mode().iloc[0])
-all_counts = all_users_data['covid_symptoms_score'].value_counts()
-print(all_counts)
-all_users_data["major_baseline"] = occ_most
-all_users_data["random_baseline"] = 
-all_users_data.to_csv(f"./all_users_data.csv")
-
-clas_report = classification_report(all_users_data['covid_symptoms_score'], all_users_data['major_baseline'])
-print(clas_report)        
 # CALCULATE BASELINE HERE
 # 1. Haal alle CSV'tjes op die worden aangemaakt op bovenstaande line en plak ze achter elkaar
-# 2. Haal totaal aantal covid_symtoms_scores op en noteer deze. Bijvoorbeeld
-#       1000x covid_symotoms_score 1
-#       29760x covid_symotoms_score 2
-#       1830x covid_symotoms_score 3
-#       etc.
-# 3. Maak een baseline aan, waarbij voor elke rij de meestvoorkomende covid_symptoms_score wordt 'gepredict'
+files = [os.path.join("./user_data/", file) for file in os.listdir("./user_data/")]
+all_users_data = pd.concat((pd.read_csv(f) for f in files if f.endswith('csv')), ignore_index=True)
+# 2. Haal totaal aantal covid_symtoms_scores op en noteer deze.
+occ_most = int(all_users_data.covid_symptoms_score.mode().iloc[0])
+
+# 3. Maak een random en majority baseline aan
+all_users_data["major_baseline"] = occ_most
+all_users_data["random_baseline"] = np.random.randint(1, 7, all_users_data.shape[0])
+all_users_data.to_csv(f"./all_users_data.csv")
+
 # 4. Bereken de precission-, recall- en F1-scores op basis van bovenstaande baseline
+class_report_major = classification_report(all_users_data['covid_symptoms_score'], all_users_data['major_baseline'])
+class_report_random = classification_report(all_users_data['covid_symptoms_score'], all_users_data['random_baseline'])
+print('Classification Report Majority Baseline: \n', class_report_major)
+print('Classification Report Random Baseline: \n', class_report_random)
+      
 
