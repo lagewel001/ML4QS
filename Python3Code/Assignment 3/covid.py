@@ -6,7 +6,6 @@ import scipy.interpolate as interp
 from matplotlib import pyplot as plt
 from sklearn.metrics import classification_report
 
-
 from Chapter3.ImputationMissingValues import ImputationMissingValues
 from Chapter3.OutlierDetection import DistributionBasedOutlierDetection
 from Chapter3.DataTransformation import LowPassFilter, PrincipalComponentAnalysis
@@ -23,6 +22,7 @@ FreqAbs = FourierTransformation()
 CatAbs = CategoricalAbstraction()
 clusteringNH = NonHierarchicalClustering()
 
+# Load in and combine required data
 hr_data = pd.read_csv('./data/heart_rate.csv')
 hr_data.datetime = pd.to_datetime(hr_data.datetime)
 hr_data = hr_data.sort_values('datetime').drop('is_resting', axis=1)
@@ -53,6 +53,29 @@ combi_data = pd.merge_asof(combi_data, hrv_data, on='datetime', by='user_code')
 
 combi_data.set_index('datetime', inplace=True)
 
+
+def plot_covid_data(data, cols, labels, user_code, file_name):
+    fig, axs = plt.subplots(2, figsize=(8, 5), sharex='all', gridspec_kw={'height_ratios': [5, 1]})
+
+    for col, label in zip(cols, labels):
+        axs[0].plot(data.index, data[col], label=label)
+    axs[0].set_title('Measurements', loc='left')
+
+    axs[1].plot(data.index, user_data.covid_symptoms_score, color='#d62728', label='covid score')
+    axs[1].set_ylim((-1, 7))
+    axs[1].set_title('Covid symptoms score', loc='left')
+
+    lines_labels = [ax.get_legend_handles_labels() for ax in fig.axes]
+    lines, labels = [sum(l, []) for l in zip(*lines_labels)]
+    axs[1].legend(lines, labels, loc='upper center', bbox_to_anchor=(.5, -.65),
+                  ncol=4, borderaxespad=0)
+
+    fig.suptitle(f"User {user_code}")
+
+    plt.savefig(file_name, bbox_inches='tight')
+    plt.show()
+
+
 granularity = 1
 delta = 500
 epsilon = delta / (1 + granularity)
@@ -62,16 +85,12 @@ for user_code, user_data in combi_data.groupby('user_code'):
         dt_range_index = pd.date_range(user_data.index.min(), periods=len(user_data), freq=f"{delta}ms")
         user_data.index = dt_range_index
 
-        plt.plot(user_data.index, user_data.heart_rate, label='heart rate')
-        plt.plot(user_data.index, user_data.diastolic, label='bp diastolic')
-        plt.plot(user_data.index, user_data.systolic, label='bp systolic')
-        plt.plot(user_data.index, user_data.covid_symptoms_score, label='covid_symptoms_score')
+        # Plot original data
+        plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
+                        ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
+                        f"./user_data/blood_pressure_{user_code}_orig.png")
 
-        plt.title(user_code)
-        plt.legend(loc='upper center', bbox_to_anchor=(.5, -.25), ncol=2, fancybox=True, shadow=True)
-        plt.show()
-
-        # Remove duplicated blood pressure data
+        # Remove duplicated blood pressure data caused by asof merge
         bp_cols = ['diastolic', 'systolic', 'functional_changes_index', 'circulatory_efficiency',
                    'kerdo_vegetation_index', 'robinson_index']
         user_data.loc[user_data.diastolic.diff(-1).fillna(user_data.diastolic) == 0, bp_cols] = np.nan
@@ -93,7 +112,7 @@ for user_code, user_data in combi_data.groupby('user_code'):
             user_data[col] = user_data[col].interpolate()
             user_data[col] = user_data[col].fillna(method='bfill')
 
-        # Interpolate blood pressure data to smoothen
+        # B-spline interpolate blood pressure data to smoothen
         for col in bp_cols:
             bp_data = user_data[col].dropna()
             if not bp_data.empty:
@@ -118,7 +137,8 @@ for user_code, user_data in combi_data.groupby('user_code'):
                                          (bp_curve.min(), bp_curve.max()),
                                          (bp_data.min(), bp_data.max()))
 
-                    user_data[bp_data.index[0]:bp_data.index[-1]][col] = bp_curve
+                    user_data[col] = np.nan
+                    user_data.loc[bp_data.index[0]:bp_data.index[-1], col] = bp_curve
 
         # Outlier detection
         print("*Reutel Reutel* Doing Chauvenet outlier detection...")
@@ -138,59 +158,43 @@ for user_code, user_data in combi_data.groupby('user_code'):
         fs = float(1000) / epsilon
         cutoff = 1.5
         for col in feature_cols:
-            data = LowPass.low_pass_filter(user_data, col, fs, cutoff, order=10)
-            data[col] = data[col + '_lowpass']
-            del data[col + '_lowpass']
+            user_data = LowPass.low_pass_filter(user_data, col, fs, cutoff, order=10)
+            user_data[col] = user_data[col + '_lowpass']
+            del user_data[col + '_lowpass']
 
         for col in feature_cols:
-            data = MisVal.impute_interpolate(user_data, col)
-
-        n_pcs = np.argmax(PCA.determine_pc_explained_variance(user_data, feature_cols)) + 1
-        data = PCA.apply_pca(copy.deepcopy(user_data), feature_cols, n_pcs)
+            user_data = MisVal.impute_interpolate(user_data, col)
 
         # Add frequency features
         print("*Prrrt Prrrt* Adding frequency features...")
-        if 'datetime' in data.columns:
-            data = data.set_index('datetime', drop=True)
-        data.index = pd.to_datetime(data.index)
+        if 'datetime' in user_data.columns:
+            user_data = user_data.set_index('datetime', drop=True)
+        user_data.index = pd.to_datetime(user_data.index)
 
         ws = int(float(0.5 * 60000) / epsilon)
         fs = float(1000) / epsilon
 
         for col in feature_cols:
-            aggregations = user_data[col].rolling(f"{ws}s", min_periods=ws)
-            user_data[col + '_temp_mean_ws_' + str(ws)] = aggregations.mean()
-            user_data[col + '_temp_std_ws_' + str(ws)] = aggregations.std()
+            if not user_data[col].isnull().values.all():
+                aggregations = user_data[col].rolling(f"{ws}s", min_periods=ws)
+                user_data[col + '_temp_mean_ws_' + str(ws)] = aggregations.mean()
+                user_data[col + '_temp_std_ws_' + str(ws)] = aggregations.std()
 
         user_data = CatAbs.abstract_categorical(user_data, ['covid_symptoms_score'], ['like'], 0.03,
                                                 int(float(5 * 60000) / epsilon), 2)
         user_data = FreqAbs.abstract_frequency(copy.deepcopy(user_data), feature_cols,
                                                int(float(10000) / epsilon), float(1000) / epsilon)
 
-        # Clustering
-
-        # Saving the world from covid using sick multi-user ML
-
-        fig, axs = plt.subplots(2, figsize=(8, 5), sharex='all', gridspec_kw={'height_ratios': [5, 1]})
-
-        axs[0].plot(user_data.index, user_data.heart_rate, label='heart rate')
-        axs[0].plot(user_data.index, user_data.diastolic, label='bp diastolic interp.')
-        axs[0].plot(user_data.index, user_data.systolic, label='bp systolic interp.')
-        axs[0].set_title('Measurements', loc='left')
-        axs[0].legend(loc='center left', bbox_to_anchor=(1.04, .5), ncol=1, fancybox=True, shadow=True, borderaxespad=0)
-
-        axs[1].plot(user_data.index, user_data.covid_symptoms_score, label='covid_symptoms_score')
-        axs[1].set_ylim((-1, 7))
-        axs[1].set_title('Covid symptoms score', loc='left')
-
-        fig.suptitle(f"User {user_code}")
-        plt.show()
+        # Plot everything
+        plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
+                        ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
+                        f"./user_data/blood_pressure_{user_code}_interp.png")
 
         print(f"\n\nCorrelations for user {user_code} ({len(user_data)})")
         pearson_corr = user_data.corr('pearson')['covid_symptoms_score'][:]
         spearman_corr = user_data.corr('spearman')['covid_symptoms_score'][:]
-        corrs = pd.concat([pearson_corr, spearman_corr], keys=['Pearson', 'Spearman'], axis=1).sort_values(
-            ['Pearson', 'Spearman'], ascending=False)
+        corrs = pd.concat([pearson_corr, spearman_corr], keys=['Pearson', 'Spearman'], axis=1)\
+            .sort_values(['Pearson', 'Spearman'], ascending=False)
 
         print("Name,Pearson,Spearman")
         for corr in corrs.iterrows():
@@ -205,18 +209,8 @@ occ_most = int(all_users_data.covid_symptoms_score.mode().iloc[0])
 all_counts = all_users_data['covid_symptoms_score'].value_counts()
 print(all_counts)
 all_users_data["major_baseline"] = occ_most
-all_users_data["random_baseline"] = 
+all_users_data["random_baseline"] = 0
 all_users_data.to_csv(f"./all_users_data.csv")
 
 clas_report = classification_report(all_users_data['covid_symptoms_score'], all_users_data['major_baseline'])
 print(clas_report)        
-# CALCULATE BASELINE HERE
-# 1. Haal alle CSV'tjes op die worden aangemaakt op bovenstaande line en plak ze achter elkaar
-# 2. Haal totaal aantal covid_symtoms_scores op en noteer deze. Bijvoorbeeld
-#       1000x covid_symotoms_score 1
-#       29760x covid_symotoms_score 2
-#       1830x covid_symotoms_score 3
-#       etc.
-# 3. Maak een baseline aan, waarbij voor elke rij de meestvoorkomende covid_symptoms_score wordt 'gepredict'
-# 4. Bereken de precission-, recall- en F1-scores op basis van bovenstaande baseline
-
