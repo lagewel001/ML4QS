@@ -1,4 +1,5 @@
 import copy
+import csv
 import numpy as np
 import pandas as pd
 import os
@@ -76,24 +77,52 @@ def plot_covid_data(data, cols, labels, user_code, file_name):
     plt.show()
 
 
+RECREATE = False
+
 granularity = 1
 delta = 500
 epsilon = delta / (1 + granularity)
 for user_code, user_data in combi_data.groupby('user_code'):
-    if len(user_data) > 99 and len(np.unique(user_data.covid_symptoms_score)) > 2:
+    if (not os.path.exists(f"./user_data/covid_data_{user_code}.csv") or RECREATE) and len(user_data) > 99 and \
+            len(np.unique(user_data.covid_symptoms_score)) > 2:
         user_data = user_data.copy()
         dt_range_index = pd.date_range(user_data.index.min(), periods=len(user_data), freq=f"{delta}ms")
         user_data.index = dt_range_index
 
-        # Plot original data
-        plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
-                        ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
-                        f"./user_data/blood_pressure_{user_code}_orig.png")
-
-        # Remove duplicated blood pressure data caused by asof merge
+        hr_cols = ['heart_rate', 'meanrr', 'mxdmn', 'sdnn', 'rmssd', 'pnn50',
+                   'mode', 'amo', 'lf', 'hf', 'vlf', 'lfhf', 'total_power']
         bp_cols = ['diastolic', 'systolic', 'functional_changes_index', 'circulatory_efficiency',
                    'kerdo_vegetation_index', 'robinson_index']
-        user_data.loc[user_data.diastolic.diff(-1).fillna(user_data.diastolic) == 0, bp_cols] = np.nan
+        feature_cols = hr_cols + bp_cols
+
+        user_data.dropna(axis=1, how='all', inplace=True)
+        feature_cols = [c for c in feature_cols if c in user_data.columns]
+
+        # Plot original data
+        if all(c in feature_cols for c in ['heart_rate', 'diastolic', 'systolic']):
+            plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
+                            ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
+                            f"./user_data/blood_pressure_{user_code}_orig.png")
+
+        if all(c in feature_cols for c in ['functional_changes_index', 'kerdo_vegetation_index']):
+            plot_covid_data(user_data, ['functional_changes_index', 'kerdo_vegetation_index'],
+                            ['functional_changes_index', 'kerdo_vegetation_index'], user_code,
+                            f"./user_data/bp_idx_{user_code}_orig.png")
+
+        if 'circulatory_efficiency' in feature_cols:
+            plot_covid_data(user_data, ['circulatory_efficiency'], ['circulatory_efficiency'], user_code,
+                            f"./user_data/circulatory_efficiency_{user_code}_orig.png")
+
+        if 'robinson_index' in feature_cols:
+            plot_covid_data(user_data, ['robinson_index'], ['robinson_index'], user_code,
+                            f"./user_data/robinson_index_{user_code}_orig.png")
+
+        plot_covid_data(user_data, ['meanrr', 'total_power'], ['meanrr', 'total_power'], user_code,
+                        f"./user_data/hrv_{user_code}_orig.png")
+
+        if 'diastolic' in feature_cols:
+            # Remove duplicated blood pressure data caused by asof merge
+            user_data.loc[user_data.diastolic.diff(-1).fillna(user_data.diastolic) == 0, bp_cols] = np.nan
 
         # Increase data granularity based on heart rate
         intermediate_row = pd.Series(np.nan, user_data.columns)
@@ -107,44 +136,43 @@ for user_code, user_data in combi_data.groupby('user_code'):
         user_data.covid_symptoms_score = user_data.covid_symptoms_score.interpolate('nearest')
         user_data.covid_symptoms_score = user_data.covid_symptoms_score.fillna(method='pad')
 
-        for col in ['heart_rate', 'meanrr', 'mxdmn', 'sdnn', 'rmssd', 'pnn50',
-                    'mode', 'amo', 'lf', 'hf', 'vlf', 'lfhf', 'total_power']:
+        for col in hr_cols:
             user_data[col] = user_data[col].interpolate()
             user_data[col] = user_data[col].fillna(method='bfill')
 
         # B-spline interpolate blood pressure data to smoothen
+        print("Imputing blood pressure values")
         for col in bp_cols:
-            bp_data = user_data[col].dropna()
-            if not bp_data.empty:
-                t_intervals = bp_data.index.to_series().diff()
-                if t_intervals.iloc[-1] > t_intervals.mean() + t_intervals.std():
-                    bp_data = bp_data.iloc[:-1]
+            if col in feature_cols:
+                bp_data = user_data[col].dropna()
+                if not bp_data.empty:
+                    t_intervals = bp_data.index.to_series().diff()
+                    if t_intervals.iloc[-1] > t_intervals.mean() + t_intervals.std():
+                        bp_data = bp_data.iloc[:-1]
 
-                k = 2
-                if len(bp_data) <= k:
-                    user_data[col] = user_data[col].interpolate()
-                    user_data[col] = user_data[col].fillna(method='bfill')
-                else:
-                    epoch = pd.Timestamp('1970-01-01')
-                    t_index = (bp_data.index - epoch) // pd.Timedelta('1s')
+                    k = 2
+                    if len(bp_data) <= k:
+                        user_data[col] = user_data[col].interpolate()
+                        user_data[col] = user_data[col].fillna(method='bfill')
+                    else:
+                        epoch = pd.Timestamp('1970-01-01')
+                        t_index = (bp_data.index - epoch) // pd.Timedelta('1s')
 
-                    t, c, k = interp.splrep(t_index, bp_data.values, s=0, k=k)
-                    xx = np.linspace(t_index.min(), t_index.max(), len(user_data[bp_data.index[0]:bp_data.index[-1]]))
-                    spline = interp.BSpline(t, c, k, extrapolate=False)
+                        t, c, k = interp.splrep(t_index, bp_data.values, s=0, k=k)
+                        xx = np.linspace(t_index.min(), t_index.max(),
+                                         len(user_data[bp_data.index[0]:bp_data.index[-1]]))
+                        spline = interp.BSpline(t, c, k, extrapolate=False)
 
-                    bp_curve = spline(xx)
-                    bp_curve = np.interp(bp_curve,
-                                         (bp_curve.min(), bp_curve.max()),
-                                         (bp_data.min(), bp_data.max()))
+                        bp_curve = spline(xx)
+                        bp_curve = np.interp(bp_curve,
+                                             (bp_curve.min(), bp_curve.max()),
+                                             (bp_data.min(), bp_data.max()))
 
-                    user_data[col] = np.nan
-                    user_data.loc[bp_data.index[0]:bp_data.index[-1], col] = bp_curve
+                        user_data[col] = np.nan
+                        user_data[bp_data.index[0]:bp_data.index[-1]][col] = bp_curve
 
         # Outlier detection
         print("*Reutel Reutel* Doing Chauvenet outlier detection...")
-
-        feature_cols = ['heart_rate', 'diastolic', 'systolic', 'meanrr', 'mxdmn', 'sdnn', 'rmssd',
-                        'pnn50', 'mode', 'amo', 'lf', 'hf', 'vlf', 'lfhf', 'total_power']
         for col in feature_cols:
             print(f'Measurement is now: {col}')
             user_data = OutlierDistr.chauvenet(user_data, col)
@@ -186,9 +214,26 @@ for user_code, user_data in combi_data.groupby('user_code'):
                                                int(float(10000) / epsilon), float(1000) / epsilon)
 
         # Plot everything
-        plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
-                        ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
-                        f"./user_data/blood_pressure_{user_code}_interp.png")
+        if all(c in feature_cols for c in ['heart_rate', 'diastolic', 'systolic']):
+            plot_covid_data(user_data, ['heart_rate', 'diastolic', 'systolic'],
+                            ['heart rate', 'bp diastolic', 'bp systolic'], user_code,
+                            f"./user_data/blood_pressure_{user_code}_interp.png")
+
+        if all(c in feature_cols for c in ['functional_changes_index', 'kerdo_vegetation_index']):
+            plot_covid_data(user_data, ['functional_changes_index', 'kerdo_vegetation_index'],
+                            ['functional_changes_index', 'kerdo_vegetation_index'], user_code,
+                            f"./user_data/bp_idx_{user_code}_interp.png")
+
+        if 'circulatory_efficiency' in feature_cols:
+            plot_covid_data(user_data, ['circulatory_efficiency'], ['circulatory_efficiency'], user_code,
+                            f"./user_data/circulatory_efficiency_{user_code}_interp.png")
+
+        if 'robinson_index' in feature_cols:
+            plot_covid_data(user_data, ['robinson_index'], ['robinson_index'], user_code,
+                            f"./user_data/robinson_index_{user_code}_interp.png")
+
+        plot_covid_data(user_data, ['meanrr', 'total_power'], ['meanrr', 'total_power'], user_code,
+                        f"./user_data/hrv_{user_code}_interp.png")
 
         print(f"\n\nCorrelations for user {user_code} ({len(user_data)})")
         pearson_corr = user_data.corr('pearson')['covid_symptoms_score'][:]
@@ -197,6 +242,7 @@ for user_code, user_data in combi_data.groupby('user_code'):
             .sort_values(['Pearson', 'Spearman'], ascending=False)
 
         print("Name,Pearson,Spearman")
+        corrs.to_csv(f"./user_data/covid_data_{user_code}_corrs.csv")
         for corr in corrs.iterrows():
             print(f"{corr[0]},{corr[1].Pearson},{corr[1].Spearman}")
 
@@ -218,4 +264,3 @@ class_report_major = classification_report(all_users_data['covid_symptoms_score'
 class_report_random = classification_report(all_users_data['covid_symptoms_score'], all_users_data['random_baseline'])
 print('Classification Report Majority Baseline: \n', class_report_major)
 print('Classification Report Random Baseline: \n', class_report_random)
-      
